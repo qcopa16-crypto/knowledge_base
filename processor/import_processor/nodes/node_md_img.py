@@ -7,12 +7,9 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import Tuple, List, Dict, Deque
-
 from langchain_openai import ChatOpenAI
 from minio import Minio
 from minio.deleteobjects import DeleteObject
-from openai import OpenAI
-
 from config.lm_config import lm_config
 from config.minio_config import minio_config
 from processor.import_processor.base import BaseNode, setup_logging
@@ -20,8 +17,6 @@ from processor.import_processor.exceptions import StateFieldError, FileProcessin
 from processor.import_processor.state import ImportGraphState
 from utils.minio_utils import get_minio_client
 
-
-# from utils.minio_utils import get_minio_client
 
 
 class NodeMDImg(BaseNode):
