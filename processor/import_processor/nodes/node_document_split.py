@@ -229,7 +229,7 @@ class NodeDocumentSplit(BaseNode):
                 "file_title": section.get("file_title"),  # 所属文件标题
             })
 
-        self.self.logger.debug(f"超长章节切分完成：{title} → 生成{len(sub_sections)}个子Chunk")
+        self.logger.debug(f"超长章节切分完成：{title} → 生成{len(sub_sections)}个子Chunk")
 
         return sub_sections
 
@@ -261,7 +261,11 @@ class NodeDocumentSplit(BaseNode):
             is_current_short = len(current_chunk["content"]) < self.config.min_content_length
             is_same_parent = current_chunk.get("parent_title") == sec.get("parent_title")
 
-            if is_current_short and is_same_parent:
+            # 预判合并后的总长度（+2 是拼接时的两个换行符）
+            merged_length = len(current_chunk["content"]) + 2 + len(sec["content"])
+            not_overflow = merged_length <= self.config.max_content_length
+
+            if is_current_short and is_same_parent and not_overflow:
                 # 合并前清理：去掉下一块开头重复的父标题，避免内容冗余
                 parent_title = sec.get("parent_title", "")
                 next_content = sec["content"]
