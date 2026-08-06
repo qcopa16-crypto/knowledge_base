@@ -15,6 +15,7 @@ from config.minio_config import minio_config
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError, FileProcessingError
 from processor.import_processor.state import ImportGraphState
+from utils.llm_utils import get_llm_client
 from utils.minio_utils import get_minio_client
 
 
@@ -198,12 +199,8 @@ class NodeMDImg(BaseNode):
             base64_image = base64.b64encode(img_file.read()).decode("utf-8")
 
         try:
-            chat_model = ChatOpenAI(
-                model=lm_config.vl_model,
-                api_key=lm_config.api_key,
-                base_url=lm_config.base_url,
-                temperature=lm_config.llm_temperature
-            )
+            
+            vl_model = get_llm_client(lm_config.vl_model)
 
             messages = [
                 {
@@ -223,7 +220,7 @@ class NodeMDImg(BaseNode):
                 }
             ]
 
-            response = chat_model.invoke(messages)
+            response = vl_model.invoke(messages)
 
             return response.content.strip().replace("\n", "")
 
