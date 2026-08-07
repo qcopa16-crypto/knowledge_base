@@ -406,4 +406,9 @@ if __name__ == "__main__":
     node_item_name_recognition = NodeItemNameRecognition()
     result = node_item_name_recognition(init_state)
 
+    chunks_json = result
+    state_json_path = r"E:\doc\hak180产品安全手册\state.json"
+    with open(state_json_path, "w", encoding="utf-8") as f:
+        json.dump(chunks_json, f, ensure_ascii=False, indent=2)
+
     logging.getLogger().info(json.dumps(result, ensure_ascii=False, indent=4))
