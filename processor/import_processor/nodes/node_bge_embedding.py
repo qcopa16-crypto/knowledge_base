@@ -128,4 +128,9 @@ if __name__ == "__main__":
 
     result = node_bge_embedding(init_state)
 
+    result_save_path = r"E:\doc\hak180产品安全手册\state_vector.json"
+    with open(result_save_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+
     logging.getLogger().info(json.dumps(result, ensure_ascii=False, indent=4))
