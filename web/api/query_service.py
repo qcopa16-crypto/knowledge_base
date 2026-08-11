@@ -92,16 +92,19 @@ async def query(background_tasks: BackgroundTasks, request: QueryRequest):
 # 定义查询接口
 def run_query_graph(session_id: str, user_query: str, is_stream: bool = True):
     print(f"开始流程图处理...{session_id} {user_query} {is_stream}")
-
     init_state = {
         "original_query": user_query,
         "session_id": session_id,
         "is_stream": is_stream
     }
-
     try:
         workflow = KBQueryWorkflow()
-        workflow.run(init_state, stream=is_stream)
+        if is_stream:
+            for _ in workflow.run(init_state, stream=is_stream):
+                pass
+        else:
+            workflow.run(init_state, stream=is_stream)
+
         update_task_status(session_id, TASK_STATUS_COMPLETED, is_stream)
     except Exception as e:
         print(f"流程执行异常: {e}")
