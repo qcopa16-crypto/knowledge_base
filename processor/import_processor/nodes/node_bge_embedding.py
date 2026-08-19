@@ -80,7 +80,7 @@ class NodeBGEEmbedding(BaseNode):
             self.logger.info(f"成功获取第 {i + 1}-{min(i + len(batch_texts), len(chunks))} 项的嵌入。")
 
             # 返回带向量的文本切片列表（供后续存入Milvus）
-            return output_data
+        return output_data
 
     def process(self, state: ImportGraphState):
         """
