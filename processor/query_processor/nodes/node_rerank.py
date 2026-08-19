@@ -80,7 +80,7 @@ class NodeRerank(NodeBase):
         except Exception as e:
             logger.error(f"Rerank 重排序失败: {str(e)}")
 
-            return [{**merged_multi_docs, "score": None}]
+            return [{**doc, "score": None} for doc in merged_multi_docs]
 
     def _step_3_cliff_cutoff(self, ranked_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """断崖检测截断：相邻得分差距超过阈值时截断。"""
@@ -142,6 +142,7 @@ class NodeRerank(NodeBase):
 
 if __name__ == "__main__":
     mock_state = {
+        "session_id": "test_session_002",
         "rewritten_query": "怎么测这块主板的短路问题？",
         "rrf_chunks": [
             {

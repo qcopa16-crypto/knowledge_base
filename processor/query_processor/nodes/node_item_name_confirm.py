@@ -87,18 +87,20 @@ class NodeItemNameConfirm(NodeBase):
             # 7. 数据解析：将JSON字符串转为字典
             result = json.loads(content)
 
-            # 8. 健壮性处理：确保字段存在
-            # 确保返回结果包含item_names字段，无则设为空列表
-            if "item_names" not in result:
-                result["item_names"] = []
-            # 确保返回结果包含rewritten_query字段，无则复用原始查询
-            if "rewritten_query" not in result:
+            # 8. 健壮性处理：确保字段存在且类型正确
+            # 确保返回结果包含item_names字段，且必须为非空字符串组成的list，否则置空
+            raw_names = result.get("item_names")
+            if not isinstance(raw_names, list):
+                raw_names = []
+            # 确保返回结果包含rewritten_query字段，且必须为字符串，否则复用原始查询
+            if not isinstance(result.get("rewritten_query"), str):
                 result["rewritten_query"] = query
 
-            # 9. 给item_names 去除空格
+            # 9. 给item_names 去除空格（仅保留字符串元素，过滤非法类型）
             result["item_names"] = [
                 name.replace(" ", "").replace("\n", "").replace("\t", "").replace("\r", "")
-                for name in result["item_names"]
+                for name in raw_names
+                if isinstance(name, str)
             ]
 
             # 10、返回解析后的提取结果
@@ -420,13 +422,12 @@ class NodeItemNameConfirm(NodeBase):
 
 
 if __name__ == "__main__":
-
     # 初始化图状态
     # "HAK 180 烫金机怎么用？"
     # "怎么用呢？"
     init_state = {
         "original_query": "怎么调他的转印温度？",
-        "session_id":"test_session_002",
+        "session_id": "test_session_002",
     }
 
     # 创建节点对象
