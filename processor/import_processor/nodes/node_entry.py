@@ -49,7 +49,6 @@ class NodeEntry(BaseNode):
 
         # 4. 获取上传文件的标题，更新到state中
         state["file_title"] = import_file_path_obj.stem
-        state["file_dir"] = r"E:\学习视频\掌柜智库课件0525\掌柜智库课件0525\2.资料\04-设备手册汇总\doc"
 
         # 5. 返回state
         return state

@@ -69,7 +69,7 @@ class NodeBGEEmbedding(BaseNode):
                 content = doc["content"]
                 input_texts.append(f"{item_name}\n{content}" if item_name else content)
 
-                docs_embeddings = generate_embeddings(input_texts)
+            docs_embeddings = generate_embeddings(input_texts)
 
             for j, doc in enumerate(batch_texts):
                 item = doc.copy()

@@ -273,10 +273,10 @@ class NodeItemNameConfirm(NodeBase):
                 confirmed_item_names.append(picked.get("item_name"))
                 continue
 
-        if len(mid) > 0:
-            # 取中置信度结果的前5个，加入候选列表
-            for m in mid[:5]:
-                options.append(m.get("item_name"))
+            if len(mid) > 0:
+                # 取中置信度结果的前5个，加入候选列表
+                for m in mid[:5]:
+                    options.append(m.get("item_name"))
 
             # 规则d: 无0.6分及以上结果 → 不做任何操作，确认+候选列表均为空
             # 返回最终对齐结果：确认列表和候选列表均做去重处理（list(set())）
