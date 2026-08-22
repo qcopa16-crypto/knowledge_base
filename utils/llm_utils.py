@@ -1,9 +1,11 @@
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-
+import os
 from config.lm_config import lm_config
 
 _llm_client_cache = {}
 
+load_dotenv()
 
 def get_llm_client(model: str | None = None, json_model: bool = False):
     m = model or lm_config.llm_model
@@ -19,6 +21,9 @@ def get_llm_client(model: str | None = None, json_model: bool = False):
         "base_url": lm_config.base_url,
         "temperature": lm_config.llm_temperature
     }
+
+    if m == "qwen3-vl-flash":
+        llm_kwargs["api_key"] = os.getenv("OPENAI_API_KEY_1")
 
     # JSON 模式下追加响应格式约束
     if json_model:

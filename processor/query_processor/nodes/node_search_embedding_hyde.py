@@ -119,6 +119,11 @@ class NodeSearchEmbeddingHyde(NodeBase):
         :return: 包含 hyde_embedding_chunks (检索结果) 和 hyde_doc (假设文档) 的字典
         """
 
+        # 0、检索路开关：enable_hyde 为 False 时跳过本路（用于评测对比/降级）
+        if state.get("enable_hyde", True) is False:
+            logger.info("[node_search_embedding_hyde] enable_hyde=False，跳过 HyDE 检索")
+            return {"hyde_embedding_chunks": [], "hyde_doc": ""}
+
         # 1、用户问题和已确认商品名
         rewritten_query = state.get("rewritten_query")
         item_names = state.get("item_names")

@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional
 from bson import ObjectId
 from dotenv import load_dotenv
-from pymongo import MongoClient, ASCENDING
+from pymongo import MongoClient, ASCENDING, DESCENDING
 import logging
 
 load_dotenv()
@@ -26,9 +26,11 @@ class HistoryMongoTool:
             self.mongo_url = os.getenv("MONGO_URL")
             # 从环境变量读取要使用的数据库名称
             self.db_name = os.getenv("MONGO_DB_NAME")
+            # 连接池大小（高并发下控制连接数，gevent 协程复用）
+            self.max_pool_size = int(os.getenv("MONGO_MAX_POOL_SIZE", "50"))
 
-            # 创建MongoDB客户端实例，建立与数据库的连接
-            self.client = MongoClient(self.mongo_url)
+            # 创建MongoDB客户端实例，建立与数据库的连接（配置连接池上限）
+            self.client = MongoClient(self.mongo_url, maxPoolSize=self.max_pool_size)
 
             # 获取指定名称的数据库对象
             self.db = self.client[self.db_name]
@@ -36,8 +38,15 @@ class HistoryMongoTool:
             # 获取对话记录的集合（相当于关系型数据库的表），集合名：chat_message
             self.chat_message = self.db["chat_message"]
 
+            # 获取会话元信息集合（记录会话归属与标题）
+            self.chat_session = self.db["chat_session"]
+
             # 为chat_message集合创建复合索引，提升查询性能
             self.chat_message.create_index([("session_id", 1), ("ts", -1)])
+
+            # 为chat_session集合创建复合索引，支持按用户+更新时间查询
+            self.chat_session.create_index([("user_id", 1), ("updated_at", -1)])
+            self.chat_session.create_index([("session_id", 1)], unique=True)
 
             logging.info(f"Successfully connected to MongoDB: {self.db_name}")
 
@@ -177,9 +186,11 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
     try:
         query = {"session_id": session_id}
 
-        cursor = mongo_tool.chat_message.find(query).sort("ts", ASCENDING).limit(limit)
+        # 先按时间降序取最近 limit 条，再反转成正序（保证返回的是最近的消息，且时间正序，供 LLM 上下文使用）
+        cursor = mongo_tool.chat_message.find(query).sort("ts", DESCENDING).limit(limit)
 
         messages = list(cursor)
+        messages.reverse()
 
         return messages
 
@@ -187,6 +198,147 @@ def get_recent_messages(session_id: str, limit: int = 10) -> List[Dict[str, Any]
         logging.error(f"Error getting recent messages: {e}")
         # 异常时返回空列表，避免上层处理None报错
         return []
+
+
+def create_or_update_session(session_id: str, user_id, title: str = "") -> str:
+    """
+    创建或更新会话元信息（chat_session 集合）
+
+    - 首次创建时写入标题（$setOnInsert 保证只在插入时生效，保留首条提问）
+    - 每次调用更新 updated_at，用于会话列表按最近活跃排序
+    :param session_id: 会话唯一标识
+    :param user_id: 归属用户 ID（用于按用户隔离）
+    :param title: 会话标题（取首条提问，仅在首次创建时写入）
+    :return: 会话 ID
+    """
+    mongo_tool = get_history_mongo_tool()
+    now = datetime.now().timestamp()
+    try:
+        mongo_tool.chat_session.update_one(
+            {"session_id": session_id},
+            {
+                "$set": {"user_id": user_id, "updated_at": now},
+                "$setOnInsert": {
+                    "session_id": session_id,
+                    "title": title or "",
+                    "created_at": now,
+                },
+            },
+            upsert=True,
+        )
+        return session_id
+    except Exception as e:
+        logging.error(f"Error creating/updating session {session_id}: {e}")
+        return ""
+
+
+def list_sessions(user_id, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    查询指定用户的会话列表，按最近活跃时间（updated_at）降序返回
+    :param user_id: 用户 ID，用于按用户隔离
+    :param limit: 返回数量上限，默认 50
+    :return: 会话列表（字典格式），查询失败返回空列表
+    """
+    mongo_tool = get_history_mongo_tool()
+    try:
+        cursor = (
+            mongo_tool.chat_session.find({"user_id": user_id})
+            .sort("updated_at", -1)
+            .limit(limit)
+        )
+        sessions = []
+        for s in cursor:
+            sessions.append({
+                "session_id": s.get("session_id", ""),
+                "title": s.get("title", ""),
+                "created_at": s.get("created_at"),
+                "updated_at": s.get("updated_at"),
+            })
+        return sessions
+    except Exception as e:
+        logging.error(f"Error listing sessions for user {user_id}: {e}")
+        return []
+
+
+def get_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """
+    查询单个会话元信息
+    :param session_id: 会话唯一标识
+    :return: 会话字典，不存在返回 None
+    """
+    mongo_tool = get_history_mongo_tool()
+    try:
+        return mongo_tool.chat_session.find_one({"session_id": session_id})
+    except Exception as e:
+        logging.error(f"Error getting session {session_id}: {e}")
+        return None
+
+
+def create_session_with_first_message(
+        session_id: str,
+        user_id,
+        title: str,
+        role: str,
+        text: str,
+        rewritten_query: str = "",
+        item_names: List[str] = None,
+        image_urls: List[str] = None,
+) -> Dict[str, Any]:
+    """
+    原子化创建会话并写入首条消息（补偿式一致）
+
+    MongoDB standalone 不支持原生事务，这里采用「先建会话 → 写消息失败则补偿删除会话」的补偿式一致策略，
+    保证要么会话 + 首条消息都成功，要么不残留脏数据。
+
+    执行顺序：
+    1. create_or_update_session 建会话（upsert）。
+    2. 建会话失败（返回空串）→ 不写消息，返回 {"ok": False, "stage": "session"}。
+    3. save_chat_message 写首条消息。
+    4. 写消息失败（抛异常）→ 补偿删除已建会话，返回 {"ok": False, "stage": "message"}。
+    5. 成功 → 返回 {"ok": True, "stage": None, "message_id": 消息ID}。
+
+    :param session_id: 会话唯一标识
+    :param user_id: 归属用户 ID
+    :param title: 会话标题（首条提问）
+    :param role: 消息角色（user/assistant）
+    :param text: 消息内容
+    :param rewritten_query: 重写后的查询（可选）
+    :param item_names: 关联商品名（可选）
+    :param image_urls: 关联图片（可选）
+    :return: 结构化结果 dict
+    """
+    mongo_tool = get_history_mongo_tool()
+
+    # 1. 建会话
+    try:
+        created = create_or_update_session(session_id, user_id, title)
+    except Exception as e:
+        logging.error(f"创建会话异常（session_id={session_id}）: {e}")
+        return {"ok": False, "stage": "session", "message_id": ""}
+
+    if not created:
+        return {"ok": False, "stage": "session", "message_id": ""}
+
+    # 2. 写首条消息
+    try:
+        message_id = save_chat_message(
+            session_id=session_id,
+            role=role,
+            text=text,
+            rewritten_query=rewritten_query,
+            item_names=item_names,
+            image_urls=image_urls,
+        )
+    except Exception as e:
+        logging.error(f"写入首条消息失败（session_id={session_id}）: {e}，执行补偿回滚")
+        # 3. 补偿回滚：删除已建的会话，避免残留脏数据
+        try:
+            mongo_tool.chat_session.delete_one({"session_id": session_id})
+        except Exception as rollback_err:
+            logging.error(f"补偿删除会话失败（session_id={session_id}）: {rollback_err}")
+        return {"ok": False, "stage": "message", "message_id": ""}
+
+    return {"ok": True, "stage": None, "message_id": message_id}
 
 
 # if __name__ == "__main__":

@@ -13,7 +13,7 @@ class RerankerConfig:
 
 
 reranker_config = RerankerConfig(
-    text_rerank_api_key=os.getenv("OPENAI_API_KEY"),
+    text_rerank_api_key=os.getenv("OPENAI_API_KEY_1"),
     text_rerank_model=os.getenv("TEXT_RERANK_MODEL"),
     text_rerank_instruct=os.getenv("TEXT_RERANK_INSTRUCT")
 )

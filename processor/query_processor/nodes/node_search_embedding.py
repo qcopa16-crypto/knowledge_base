@@ -32,6 +32,11 @@ class NodeSearchEmbedding(NodeBase):
                   }
          """
 
+         # 0、检索路开关：enable_embedding 为 False 时跳过本路（用于评测对比/降级）
+         if state.get("enable_embedding", True) is False:
+             logger.info("[node_search_embedding] enable_embedding=False，跳过向量检索")
+             return {"embedding_chunks": []}
+
          try:
 
              # 1、用户问题和已确认商品名

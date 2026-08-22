@@ -170,3 +170,19 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+### Node / Vue 前端 ###
+node_modules/
+.pnpm-store/
+.vite/
+frontend/node_modules/
+frontend/dist/
+
+### 运行时数据（上传文件、文档副本等）###
+data/
+logs/
+
+### 编辑器 / 系统 ###
+.vscode/
+.DS_Store
+Thumbs.db
+
