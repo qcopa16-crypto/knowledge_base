@@ -54,7 +54,7 @@ export function getSessionMessages(sessionId) {
 
 export function batchGetRAGStatus(taskIds) {
     return request({
-        url: '/api/rag/status/batch/',
+        url: '/rag/status/batch/',
         method: 'post',
         data: {task_ids: taskIds}
     })

@@ -14,7 +14,7 @@ from processor.import_processor.state import ImportGraphState
 from processor.query_processor.prompt.item_name_recognition import ITEM_NAME_USER_PROMPT_TEMPLATE, \
     ITEM_NAME_SYSTEM_PROMPT
 from utils.embedding_utils import generate_embeddings
-from utils.milvus_utils import get_milvus_client, escape_milvus_string
+from utils.milvus_utils import get_milvus_client, escape_milvus_string, _ensure_collection_loaded
 
 from utils.llm_utils import get_llm_client
 
@@ -196,6 +196,13 @@ class NodeItemNameRecognition(BaseNode):
             Tuple[List, Dict]: (稠密向量列表，稀疏向量字典)
         """
 
+        if isinstance(item_name, (list, tuple)):
+            item_name = item_name[0] if item_name else ""
+
+        # 非字符串类型强转
+        if not isinstance(item_name, str):
+            item_name = str(item_name)
+
         # 1. 商品名称为空 → 直接返回空向量
         if not item_name:
             return None, None
@@ -243,8 +250,14 @@ class NodeItemNameRecognition(BaseNode):
             # 构建过滤表达式：item_name等于目标值
             filter_expr = f'item_name=="{safe_item_name}"'
 
-            # 删除符合条件的数据
-            milvus_client.delete(collection_name=collection_name, filter=filter_expr)
+            load_ok = _ensure_collection_loaded(collection_name)
+            if load_ok:
+                try:
+                    milvus_client.delete(collection_name=collection_name, filter=filter_expr)
+                except Exception as e:
+                    self.logger.warning(f"商品名旧数据清理失败，不影响本次入库: {str(e)}")
+            else:
+                self.logger.warning(f"集合 {collection_name} 未加载完成，跳过旧数据清理，直接写入")
 
             # 4. 准备插入Milvus的数据
             data = {
@@ -288,14 +301,14 @@ class NodeItemNameRecognition(BaseNode):
         schema.add_field(
             field_name="file_title",
             datatype=DataType.VARCHAR,
-            max_length=100
+            max_length=256
         )
 
         # 添加商品名称字段（VARCHAR类型，最大长度65535）
         schema.add_field(
             field_name="item_name",
             datatype=DataType.VARCHAR,
-            max_length=100
+            max_length=256
         )
 
         # 添加稠密向量字段（FLOAT_VECTOR类型，1024维，BGE-M3模型固定维度）
@@ -346,6 +359,10 @@ class NodeItemNameRecognition(BaseNode):
             schema=schema,
             index_params=index_params
         )
+
+        self.logger.info(f"商品名集合 [{collection_name}] 创建完成，正在加载到内存...")
+        _ensure_collection_loaded(collection_name)
+        self.logger.info(f"商品名集合 [{collection_name}] 加载完成")
 
     def process(self, state: ImportGraphState):
         """

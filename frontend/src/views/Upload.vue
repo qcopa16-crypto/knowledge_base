@@ -44,7 +44,17 @@
 
       <!-- 逐文件进度列表 -->
       <div v-if="uploadItems.length" class="progress-box">
-        <div class="progress-title">入库进度</div>
+        <div class="progress-header">
+          <div class="progress-title">入库进度</div>
+          <el-button
+              size="small"
+              text
+              @click="refreshStatusManually"
+              :disabled="!hasActiveTasks"
+          >
+            刷新状态
+          </el-button>
+        </div>
         <div class="file-progress-list">
           <div v-for="item in uploadItems" :key="item.uid" class="file-progress-item">
             <div class="file-progress-header">
@@ -75,8 +85,27 @@ const fileList = ref([])
 const uploadItems = ref([])
 const uploading = ref(false)
 let timer = null
+const FINAL_STATUS = ['completed', 'failed']
+const POLL_INTERVAL = {
+  fast: 2000,   // 前60次：2秒/次
+  slow: 10000,  // 60次后：10秒/次
+}
+const WARN_ATTEMPT_THRESHOLD = 60  // 超时提示阈值
+const MAX_ATTEMPTS = 300           // 最大兜底次数（防无限轮询）
+
+let attempts = 0
+let hasWarnedTimeout = false  // 超时提示只弹一次
+let consecutiveFailCount = 0  // 连续失败计数
+
 
 const pendingFiles = computed(() => uploadItems.value.filter((i) => !i.taskId))
+
+// 是否还有进行中的任务
+const hasActiveTasks = computed(() => {
+  return uploadItems.value.some(
+      (i) => i.taskId && !FINAL_STATUS.includes(i.status)
+  )
+})
 
 function statusLabel(status) {
   const map = {
@@ -130,6 +159,11 @@ async function handleUpload() {
     return
   }
   uploading.value = true
+
+  attempts = 0
+  hasWarnedTimeout = false
+  consecutiveFailCount = 0
+
   try {
     const files = targets.map((i) => i.raw)
     const data = await uploadDocuments(files)
@@ -166,24 +200,33 @@ async function handleUpload() {
   }
 }
 
+/**
+ * 阶梯退避轮询：递归setTimeout避免请求堆积
+ * 以后端终态为停止依据，次数仅做提示
+ */
 function startPolling() {
-  let attempts = 0
-  timer = setInterval(async () => {
+  stopPolling()
+
+  const poll = async () => {
     attempts += 1
+
+    // 筛选进行中的任务
     const active = uploadItems.value.filter(
-        (i) => i.taskId && !['completed', 'failed'].includes(i.status)
+        (i) => i.taskId && !FINAL_STATUS.includes(i.status)
     )
+
+    // 全部任务到终态，停止轮询
     if (!active.length) {
       stopPolling()
       uploading.value = false
       return
     }
+
     try {
-      // 提取所有任务ID，一次请求拿回全部状态
       const taskIds = active.map((item) => item.taskId)
       const {results} = await batchGetRAGStatus(taskIds)
 
-      // 批量更新每个文件的状态
+      // 批量更新状态：完全以后端返回为准
       for (const item of active) {
         const info = results[item.taskId]
         if (info) {
@@ -192,26 +235,90 @@ function startPolling() {
           item.runningList = info.running_list || []
         }
       }
+      consecutiveFailCount = 0
     } catch (e) {
+      consecutiveFailCount += 1
       console.warn('轮询状态失败', e)
-    }
-
-    const finished = uploadItems.value.every(
-        (i) => !i.taskId || ['completed', 'failed'].includes(i.status)
-    )
-    if (finished || attempts >= 60) {
-      stopPolling()
-      uploading.value = false
-      if (attempts >= 60) {
-        ElMessage.warning('部分文件处理超时，请稍后查看')
+      if (consecutiveFailCount === 5) {
+        ElMessage.warning('状态查询连续失败，请检查网络或手动刷新')
       }
     }
-  }, 2000)
+
+    // 全部完成则停止
+    const allFinished = uploadItems.value.every(
+        (i) => !i.taskId || FINAL_STATUS.includes(i.status)
+    )
+    if (allFinished) {
+      stopPolling()
+      uploading.value = false
+      return
+    }
+
+    // 达到60次阈值：只提示一次，不停止轮询
+    if (attempts === WARN_ATTEMPT_THRESHOLD && !hasWarnedTimeout) {
+      hasWarnedTimeout = true
+      ElMessage.warning('部分文件处理时间较长，将继续后台追踪，请耐心等待')
+    }
+
+    // 达到最大兜底次数，强制停止
+    if (attempts >= MAX_ATTEMPTS) {
+      stopPolling()
+      uploading.value = false
+      ElMessage.warning('轮询已达最大时长，可点击刷新按钮手动查询')
+      return
+    }
+
+    // 阶梯退避：计算下一次间隔
+    const interval = attempts < WARN_ATTEMPT_THRESHOLD
+        ? POLL_INTERVAL.fast
+        : POLL_INTERVAL.slow
+
+    timer = setTimeout(poll, interval)
+  }
+
+  poll() // 立即执行第一次
 }
+
+/**
+ * 手动刷新所有进行中任务的状态
+ */
+async function refreshStatusManually() {
+  const active = uploadItems.value.filter(
+      (i) => i.taskId && !FINAL_STATUS.includes(i.status)
+  )
+  if (!active.length) return
+
+  try {
+    const taskIds = active.map((item) => item.taskId)
+    const {results} = await batchGetRAGStatus(taskIds)
+
+    for (const item of active) {
+      const info = results[item.taskId]
+      if (info) {
+        item.status = info.status
+        item.doneList = info.done_list || []
+        item.runningList = info.running_list || []
+      }
+    }
+
+    // 刷新后全部完成则同步停止轮询
+    const allFinished = uploadItems.value.every(
+        (i) => !i.taskId || FINAL_STATUS.includes(i.status)
+    )
+    if (allFinished) {
+      stopPolling()
+      uploading.value = false
+    }
+  } catch (e) {
+    ElMessage.error('刷新状态失败')
+    console.warn(e)
+  }
+}
+
 
 function stopPolling() {
   if (timer) {
-    clearInterval(timer)
+    clearTimeout(timer)
     timer = null
   }
 }
@@ -324,4 +431,12 @@ onUnmounted(stopPolling)
 .done-node {
   color: #374151;
 }
+
+.progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
 </style>

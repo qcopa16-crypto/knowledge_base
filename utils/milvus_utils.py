@@ -1,8 +1,12 @@
 from pymilvus import MilvusClient, WeightedRanker, AnnSearchRequest
 from config.milvus_config import milvus_config
 from tool.logger import logger
+import time
+import threading
 
 _milvus_client = None
+
+_collection_load_lock = threading.Lock()
 
 
 def get_milvus_client():
@@ -18,6 +22,58 @@ def get_milvus_client():
     _milvus_client = MilvusClient(uri=milvus_config.milvus_url)
 
     return _milvus_client
+
+
+def _ensure_collection_loaded(collection_name: str) -> bool:
+    """检查集合是否加载到内存，兼容枚举/字符串两种返回格式"""
+    client = get_milvus_client()
+
+    def _is_loaded(state_val) -> bool:
+        """统一判断是否已加载，兼容枚举对象、字符串、数字三种格式"""
+        if hasattr(state_val, "name"):
+            return state_val.name == "Loaded"
+
+        if isinstance(state_val, str):
+            return state_val.lower() == "loaded"
+
+        return "loaded" in str(state_val).lower()
+
+    # 第一层：无锁快速检查
+    try:
+        load_info = client.get_load_state(collection_name)
+        if _is_loaded(load_info["state"]):
+            return True
+    except Exception as e:
+        logger.warning(f"获取集合 [{collection_name}] 加载状态失败: {str(e)}")
+
+    # 第二层：加锁后执行加载
+    with _collection_load_lock:
+        try:
+            # 加锁后二次检查
+            load_info = client.get_load_state(collection_name)
+            if _is_loaded(load_info["state"]):
+                return True
+
+            logger.info(f"集合 [{collection_name}] 未加载，正在加载到内存...")
+            client.load_collection(collection_name)
+
+            timeout = 120
+            start_time = time.time()
+
+            while time.time() - start_time < timeout:
+                current = client.get_load_state(collection_name)
+                if _is_loaded(current["state"]):
+                    logger.info(f"集合 [{collection_name}] 加载完成")
+                    return True
+                time.sleep(2)
+
+            logger.error(f"集合 [{collection_name}] 加载超时({timeout}秒)")
+            return False
+
+        except Exception as e:
+            logger.error(f"集合 [{collection_name}] 加载异常: {str(e)}")
+            return False
+
 
 
 def escape_milvus_string(value: str) -> str:
@@ -92,6 +148,7 @@ def hybrid_search(client, collection_name, reqs, ranker_weights=(0.5, 0.5), norm
     :return: 混合搜索结果列表，搜索失败返回None
     """
     try:
+        _ensure_collection_loaded(collection_name)
         # 初始化加权排名器：按权重融合稠密/稀疏向量的搜索结果
         # norm_score=True：先将两个向量评分归一化到0~1区间，再加权计算，避免一个得分特别大、另一个特别小导致权重失效。
         # 版本：V2.4

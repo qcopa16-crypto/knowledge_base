@@ -146,10 +146,21 @@ def get_running_task_list(task_id: str) -> List[str]:
     """获取正在运行节点列表（中文展示）"""
     return _to_cn_list(_get_list(task_id, "running"))
 
+def init_task_status(task_id: str) -> None:
+    """初始化任务状态（任务投递时调用）"""
+    _client().hset(_key(task_id), "status", TASK_STATUS_PENDING)
+    _client().expire(_key(task_id), 2 * 3600)
+
 
 def update_task_status(task_id: str, status_name: str, push_queue: bool = False) -> None:
     """更新任务状态"""
     _client().hset(_key(task_id), "status", status_name)
+
+    if status_name in (TASK_STATUS_COMPLETED, TASK_STATUS_FAILED):
+        _client().expire(_key(task_id), 24 * 3600)  # 终态保留24小时
+    else:
+        _client().expire(_key(task_id), 2 * 3600)  # 非终态2小时兜底
+
     if push_queue:
         task_push_queue(task_id)
 

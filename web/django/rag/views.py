@@ -28,6 +28,8 @@ from utils.mongo_history_utils import (
 from utils.sse_utils import sse_generator_sync
 from utils.task_utils import (
     TASK_STATUS_PENDING,
+    batch_get_task_full_status,
+    init_task_status,
     get_task_result,
     get_task_status,
     get_done_task_list,
@@ -80,7 +82,7 @@ class RAGUploadView(APIView):
 
             # 投递入库任务
             from tasks.rag_tasks import import_document
-            update_task_status(task_id, TASK_STATUS_PENDING)
+            init_task_status(task_id)
             import_document.apply_async(args=[task_id, file_dir, import_file_path])
 
             accepted.append({"task_id": task_id, "filename": file.name})
@@ -110,7 +112,7 @@ class RAGSubmitView(APIView):
                 return fail("import 操作需要 import_file_path", code=400)
 
             from tasks.rag_tasks import import_document
-            update_task_status(task_id, TASK_STATUS_PENDING)
+            init_task_status(task_id)
             import_document.apply_async(args=[task_id, file_dir, import_file_path])
             return success({"task_id": task_id, "op": "import"}, message="入库任务已提交", status=202)
 
@@ -129,7 +131,7 @@ class RAGSubmitView(APIView):
                 logger.warning(f"记录会话元信息失败（不影响主流程）：{e}")
 
             from tasks.rag_tasks import query_rag
-            update_task_status(task_id, TASK_STATUS_PENDING)
+            init_task_status(task_id)
             query_rag.apply_async(args=[
                 task_id,
                 query,
@@ -191,6 +193,7 @@ class RAGResultView(APIView):
 class RAGBatchStatusView(APIView):
     """批量查询任务状态，前端轮询专用，1次请求拿所有任务状态"""
     permission_classes = [IsAuthenticated]
+    authentication_classes = [CachedJWTAuthentication]
 
     def post(self, request, *args, **kwargs):
         task_ids = request.data.get("task_ids", [])
@@ -202,7 +205,6 @@ class RAGBatchStatusView(APIView):
             return fail("单次最多查询 100 个任务", code=400)
 
         # 一次性批量读取所有任务状态
-        from utils.task_utils import batch_get_task_full_status
         results = batch_get_task_full_status(task_ids)
 
         return success({"results": results})

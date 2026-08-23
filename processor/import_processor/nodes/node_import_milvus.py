@@ -8,7 +8,7 @@ from config.milvus_config import milvus_config
 from processor.import_processor.base import BaseNode, setup_logging
 from processor.import_processor.exceptions import StateFieldError, MilvusError
 from processor.import_processor.state import ImportGraphState
-from utils.milvus_utils import get_milvus_client, escape_milvus_string
+from utils.milvus_utils import get_milvus_client, escape_milvus_string, _ensure_collection_loaded
 
 
 class NodeImportMilvus(BaseNode):
@@ -92,18 +92,17 @@ class NodeImportMilvus(BaseNode):
         # 2. 创建列
         schema.add_field(field_name="chunk_id", datatype=DataType.INT64, is_primary=True, auto_id=True)
         schema.add_field(field_name="content", datatype=DataType.VARCHAR, max_length=65535)  # 切片内容
-        schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=100)  # 切片标题
-        schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=100)  # 父标题
+        schema.add_field(field_name="title", datatype=DataType.VARCHAR, max_length=256)  # 切片标题
+        schema.add_field(field_name="parent_title", datatype=DataType.VARCHAR, max_length=256)  # 父标题
         schema.add_field(field_name="part", datatype=DataType.INT8)  # 分片编号
-        schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=100)  # 源文件标题
-        schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=100)  # 商品名称（幂等性依据）
+        schema.add_field(field_name="file_title", datatype=DataType.VARCHAR, max_length=256)  # 源文件标题
+        schema.add_field(field_name="item_name", datatype=DataType.VARCHAR, max_length=256)  # 商品名称（幂等性依据）
         schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)  # 稀疏向量
         schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=vector_dimension)  # 稠密向量
 
         # 3. 创建索引
         index_params = milvus_client.prepare_index_params()
 
-        # 稠密向量索引：AUTOINDEX自动选最优索引类型+余弦相似度（语义检索常用）
         index_params.add_index(
             field_name="dense_vector",
             index_name="dense_vector_index",
@@ -127,6 +126,10 @@ class NodeImportMilvus(BaseNode):
             index_params=index_params
         )
 
+        self.logger.info(f"集合 [{collections_name}] 创建完成，正在加载到内存...")
+        _ensure_collection_loaded(collections_name)
+        self.logger.info(f"集合 [{collections_name}] 加载完成")
+
     def _step_3_clean_old_data(self, client, chunks_json_data):
         """
         幂等清理
@@ -139,12 +142,18 @@ class NodeImportMilvus(BaseNode):
         file_title = chunks_json_data[0].get("file_title")
 
         # 2. 执行幂等清理
-        self._clear_chunks_by_file_title(client, file_title)
+        try:
+            self._clear_chunks_by_file_title(client, file_title)
+        except Exception as e:
+            self.logger.warning(f"旧数据清理失败，不影响本次入库: {str(e)}")
 
     def _clear_chunks_by_file_title(self, client, file_title):
 
         try:
             file_title = escape_milvus_string(file_title)
+
+            _ensure_collection_loaded(milvus_config.chunks_collection)
+
             client.delete(
                 collection_name=milvus_config.chunks_collection,
                 filter=f"file_title=='{file_title}'")
