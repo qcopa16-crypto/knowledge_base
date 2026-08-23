@@ -44,7 +44,8 @@ celery_app.conf.update(
     task_default_queue="kb_rag",
     task_default_routing_key="kb_rag",
     broker_transport_options={
-        "consumer_timeout": 14400,
+        "acknowledgement_timeout": 12000,
+        "heartbeat": 60,
     },
     broker_heartbeat=60,
     broker_connection_retry_on_startup=True,
