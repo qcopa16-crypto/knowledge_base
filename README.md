@@ -6,18 +6,18 @@
 
 ## 🛠 技术栈
 
-| 层级 | 技术 |
-|------|------|
-| **后端框架** | Django 5.2 + DRF 3.18（管理平台）、FastAPI（RAG 引擎） |
-| **异步任务** | Celery 5.6 + RabbitMQ（消息队列） |
-| **认证** | djangorestframework-simplejwt（JWT）+ Redis 缓存认证 |
-| **数据库** | MySQL 8（元数据/权限）、MongoDB（对话历史） |
-| **向量检索** | Milvus + BGE-M3（Embedding）+ Reranker |
-| **缓存/状态** | Redis（业务缓存 db0 / 会话 db1 / 任务状态 db2） |
-| **文档解析** | MinerU（PDF → Markdown） |
-| **对象存储** | MinIO |
-| **前端** | Vue3 + Vite + Element Plus + Vue Router + Axios |
-| **测试** | pytest + pytest-django |
+| 层级 | 技术                                                |
+|------|---------------------------------------------------|
+| **后端框架** | Django 5.2 + DRF 3.18（管理平台）、FastAPI（RAG 引擎）       |
+| **异步任务** | Celery 5.6 + RabbitMQ（消息队列）                       |
+| **认证** | djangorestframework-simplejwt（JWT）+ Redis 缓存认证    |
+| **数据库** | MySQL 8（元数据/权限）、MongoDB（对话历史）                     |
+| **向量检索** | Milvus v2.5.x + BGE-M3（Embedding）+ Reranker             |
+| **缓存/状态** | Redis（业务缓存 db0 / 会话 db1 / 任务状态 db2）               |
+| **文档解析** | MinerU（PDF → Markdown）                            |
+| **对象存储** | MinIO                                             |
+| **前端** | Vue3 + Vite + Element Plus + Vue Router + Axios   |
+| **测试** | pytest + pytest-django                            |
 | **运行环境** | Python 3.11（conda 环境 `shopkeeper-ai`）、Node.js 18+ |
 
 ---
@@ -28,7 +28,7 @@
 * **PDF 深度解析**：集成 **MinerU** 解析引擎，支持将复杂的 PDF 文档精准转换为标准 Markdown 结构。
 * **图片自动管理**：提取 Markdown 中的图片并自动上传至 **MinIO** 对象存储服务，实现图文一体化管理。
 * **智能切片与实体识别**：根据语义进行文本 Chunk 切片，并通过大语言模型进行品名/核心实体抽取（Item Name Recognition）。
-* **向量存储**：使用 **BGE (如 BGE-M3)** 深度文本嵌入模型生成向量，入库至 **Milvus** 高性能向量数据库。
+* **向量存储**：使用 **BGE (如 BGE-M3)** 深度文本嵌入模型生成向量，入库至 **Milvus** 高性能向量数据库；兼容 Milvus v2.5.x 枚举格式的加载状态返回，自动适配多版本状态判断。
 
 ### 2. 多路召回与重排问答架构（Query Processor）
 * **混合检索策略**：向量检索（Milvus）、HyDE 假设性文档检索、MCP 联网搜索三路并行召回。
@@ -47,6 +47,7 @@
 * **批量任务状态查询**：支持单次请求查询多个任务状态，配合前端批量轮询，HTTP 请求量下降 90% 以上。
 * **Redis Pipeline 批量读取**：任务状态批量查询采用 Pipeline 单次网络往返，Redis IO 次数从 N 次降为 1 次。
 * **数据库长连接复用**：MySQL 持久连接 10 分钟，减少频繁建连销毁开销。
+* **Milvus 集合加载线程安全**：双重检查锁机制保证并发场景下集合仅触发一次加载，避免重复请求；加载失败自动降级，幂等清理操作跳过不阻塞主入库流程，保证任务成功率。
 
 ---
 
