@@ -25,7 +25,7 @@ def get_milvus_client():
 
 
 def _ensure_collection_loaded(collection_name: str) -> bool:
-    """检查集合是否加载到内存，兼容枚举/字符串两种返回格式"""
+    """检查集合是否加载到内存，兼容枚举/字符串两种返回格式；缺索引时自动补建"""
     client = get_milvus_client()
 
     def _is_loaded(state_val) -> bool:
@@ -37,6 +37,11 @@ def _ensure_collection_loaded(collection_name: str) -> bool:
             return state_val.lower() == "loaded"
 
         return "loaded" in str(state_val).lower()
+
+    def _is_missing_sparse_index_error(e: Exception) -> bool:
+        """判断是否为「稀疏向量字段无索引」的报错"""
+        err_msg = str(e).lower()
+        return "there is no vector index on field" in err_msg and "sparse_vector" in err_msg
 
     # 第一层：无锁快速检查
     try:
@@ -57,22 +62,44 @@ def _ensure_collection_loaded(collection_name: str) -> bool:
             logger.info(f"集合 [{collection_name}] 未加载，正在加载到内存...")
             client.load_collection(collection_name)
 
-            timeout = 120
-            start_time = time.time()
-
-            while time.time() - start_time < timeout:
-                current = client.get_load_state(collection_name)
-                if _is_loaded(current["state"]):
-                    logger.info(f"集合 [{collection_name}] 加载完成")
-                    return True
-                time.sleep(2)
-
-            logger.error(f"集合 [{collection_name}] 加载超时({timeout}秒)")
-            return False
-
         except Exception as e:
-            logger.error(f"集合 [{collection_name}] 加载异常: {str(e)}")
-            return False
+            if _is_missing_sparse_index_error(e):
+                logger.warning(f"集合 [{collection_name}] 缺少稀疏向量索引，正在自动补建...")
+                try:
+                    client.create_index(
+                        collection_name=collection_name,
+                        field_name="sparse_vector",
+                        index_name="sparse_vector_index",
+                        index_type="SPARSE_INVERTED_INDEX",
+                        metric_type="IP",
+                        params={
+                            "inverted_index_algo": "DAAT_MAXSCORE",
+                            "normalize": True,
+                            "quantization": "none"
+                        }
+                    )
+                    logger.info(f"集合 [{collection_name}] 稀疏向量索引补建完成，重试加载")
+                    client.load_collection(collection_name)
+                except Exception as idx_e:
+                    logger.error(f"自动补建稀疏索引失败: {str(idx_e)}", exc_info=True)
+                    return False
+            else:
+                logger.error(f"集合 [{collection_name}] 加载异常: {str(e)}", exc_info=True)
+                return False
+
+        timeout = 120
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            current = client.get_load_state(collection_name)
+            if _is_loaded(current["state"]):
+                logger.info(f"集合 [{collection_name}] 加载完成")
+                return True
+            time.sleep(2)
+
+        logger.error(f"集合 [{collection_name}] 加载超时({timeout}秒)")
+        return False
+
 
 
 
